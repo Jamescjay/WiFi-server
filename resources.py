@@ -4,6 +4,7 @@ from flask_bcrypt import Bcrypt
 from models import db, Admin, Hotspot, Payment
 from datetime import datetime, timedelta
 import requests
+import base64
 
 bcrypt = Bcrypt()
 
@@ -30,7 +31,7 @@ admin_fields = {
 
 hotspot_fields = {
     'id': fields.Integer,
-    'hotspot_duration': fields.String,
+    'hotspot_duration': fields.Integer,
     'amount': fields.Float,
 }
 
@@ -196,28 +197,76 @@ class PaymentResource(Resource):
         if not hotspot:
             return {'message': 'Hotspot not found.'}, 404
 
-        # Simulate Safaricom Daraja API call
-        payment_response = requests.post(
+        # Daraja API credentials
+        consumer_key = "vPcFJwePGPxsp01iuRjUYe1DBUO4wBskE4Ybiy5wB4BA28ZI"
+        consumer_secret = "T8Frn90T03oLH36DJC8pKDNpZUsGqHth3yUXVN6ipHFXMx7awzLmycEZSARIvvHI"
+        passkey = "bfb279f9aa9bdbcf158e97dd71a467cd2e0c893059b10f78e6b72ada1ed2c919"
+        business_shortcode = "174379"
+
+        # Generate access token
+        auth = requests.auth.HTTPBasicAuth(consumer_key, consumer_secret)
+        token_response = requests.get(
+            "https://sandbox.safaricom.co.ke/oauth/v1/generate?grant_type=client_credentials",
+            auth=auth
+        )
+        if token_response.status_code != 200:
+            return {'message': 'Failed to generate access token.'}, 500
+        access_token = token_response.json()['access_token']
+
+        # Prepare the password
+        now = datetime.now()
+        timestamp = now.strftime('%Y%m%d%H%M%S')
+        password_string = f"{business_shortcode}{passkey}{timestamp}"
+        password = base64.b64encode(password_string.encode()).decode()
+
+        # Prepare the STK Push request
+        payload = {
+            "BusinessShortCode": business_shortcode,
+            "Password": password,
+            "Timestamp": timestamp,
+            "TransactionType": "CustomerPayBillOnline",
+            "Amount": hotspot.amount,  # Amount based on the hotspot
+            "PartyA": args['phone_number'],  # Customer's phone number
+            "PartyB": business_shortcode,
+            "PhoneNumber": args['phone_number'],  # Customer's phone number
+            "CallBackURL": "https://63f8-41-90-172-14.ngrok-free.app/payment/callback",
+            "AccountReference": "Hotspot",
+            "TransactionDesc": f"Payment for hotspot {hotspot.id}"
+        }
+
+        headers = {
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json"
+        }
+
+        # Send the STK Push request
+        stk_response = requests.post(
             "https://sandbox.safaricom.co.ke/mpesa/stkpush/v1/processrequest",
-            json={
-                "BusinessShortCode": "478563",
-                "Password": "encoded_password",
-                "Timestamp": "timestamp",
-                "TransactionType": "CustomerPayBillOnline",
-                "Amount": hotspot.amount,
-                "PartyA": args['phone_number'],
-                "PartyB": "478563",
-                "PhoneNumber": args['phone_number'],
-                "CallBackURL": "https://your-callback-url.com",
-                "AccountReference": "Hotspot",
-                "TransactionDesc": "Payment for hotspot"
-            }
+            json=payload,
+            headers=headers
         )
 
-        if payment_response.status_code == 200:
-            expiry_time = datetime.utcnow() + timedelta(minutes=int(hotspot.hotspot_duration.split()[0]))
-            payment = Payment(phone_number=args['phone_number'], amount=hotspot.amount, hotspot_id=args['hotspot_id'], expiry_time=expiry_time)
-            db.session.add(payment)
-            db.session.commit()
-            return payment, 200
-        return {'message': 'Payment failed.'}, 400
+        if stk_response.status_code == 200:
+            # Parse the STK Push response
+            stk_data = stk_response.json()
+            if stk_data.get('ResponseCode') == "0":
+                # Calculate expiry time
+                expiry_time = datetime.utcnow() + timedelta(minutes=hotspot.hotspot_duration)
+
+                # Save payment to the database
+                payment = Payment(
+                    phone_number=args['phone_number'],
+                    amount=hotspot.amount,
+                    hotspot_id=args['hotspot_id'],
+                    expiry_time=expiry_time
+                )
+                db.session.add(payment)
+                db.session.commit()
+                return payment, 200
+            else:
+                return {
+                    'message': 'STK Push failed.',
+                    'error': stk_data.get('errorMessage', 'Unknown error')
+                }, 400
+
+        return {'message': 'Failed to send STK Push request.'}, 500

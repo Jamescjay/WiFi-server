@@ -10,7 +10,7 @@ class Admin(db.Model):
 
 class Hotspot(db.Model):
     id = db.Column(db.Integer, primary_key=True)
-    hotspot_duration = db.Column(db.String(80), nullable=False)  # e.g., '30 minutes'
+    hotspot_duration = db.Column(db.Integer, nullable=False)
     amount = db.Column(db.Float, nullable=False)
     admin_id = db.Column(db.Integer, db.ForeignKey('admin.id'), nullable=False)
 
