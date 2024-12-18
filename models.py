@@ -10,6 +10,8 @@ class Admin(db.Model):
 
 class Hotspot(db.Model):
     id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(80), nullable=False)
+    description = db.Column(db.String(80), nullable=False)
     hotspot_duration = db.Column(db.Integer, nullable=False)
     amount = db.Column(db.Float, nullable=False)
     admin_id = db.Column(db.Integer, db.ForeignKey('admin.id'), nullable=False)
@@ -20,3 +22,4 @@ class Payment(db.Model):
     amount = db.Column(db.Float, nullable=False)
     hotspot_id = db.Column(db.Integer, db.ForeignKey('hotspot.id'), nullable=False)
     expiry_time = db.Column(db.DateTime, nullable=False)
+    status = db.Column(db.String(80), nullable=False, default='pending')

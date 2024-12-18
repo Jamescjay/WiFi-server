@@ -3,12 +3,18 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_bcrypt import Bcrypt
 from flask_jwt_extended import JWTManager
 from flask_restful import Api
+from flask_cors import CORS  # Import CORS
 
 from models import db
 from resources import AdminRegisterResource, AdminLoginResource, AdminResource, HotspotResource, PaymentResource
+from resources import payment_blueprint 
+
 
 # Initialize Flask app
 app = Flask(__name__)
+
+# Enable CORS
+CORS(app, resources={r"/*": {"origins": "http://localhost:3000"}}, supports_credentials=True)
 
 # Configuration
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///wifi.db'  # Replace with your actual database URI
@@ -28,21 +34,12 @@ api.add_resource(AdminResource, '/admin', '/admin/<int:admin_id>')
 api.add_resource(HotspotResource, '/hotspot', '/hotspot/<int:id>')
 api.add_resource(PaymentResource, '/payment')
 
-# Payment callback endpoint
-@app.route('/payment/callback', methods=['POST'])
-def payment_callback():
-    data = request.json
-    # Log the received callback data (for debugging)
-    print("Callback Data Received:", data)
-
-    # Process the callback data as needed
-    # For example, update payment status in the database
-
-    return "Callback received", 200
+# Register the payment blueprint
+app.register_blueprint(payment_blueprint)
 
 # Create tables before the first request
 with app.app_context():
     db.create_all()
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    app.run(debug=True, port=5600)

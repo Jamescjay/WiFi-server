@@ -5,8 +5,10 @@ from models import db, Admin, Hotspot, Payment
 from datetime import datetime, timedelta
 import requests
 import base64
+from flask import Blueprint, request, jsonify
 
 bcrypt = Bcrypt()
+payment_blueprint = Blueprint('payment', __name__)
 
 # Parsers
 admin_parser = reqparse.RequestParser()
@@ -15,6 +17,8 @@ admin_parser.add_argument('email', required=True, help="Email is required.")
 admin_parser.add_argument('password', required=True, help="Password is required.")
 
 hotspot_parser = reqparse.RequestParser()
+hotspot_parser.add_argument('name', required=True, help="Name is required.")
+hotspot_parser.add_argument('description', required=True, help="Name is required.")
 hotspot_parser.add_argument('hotspot_duration', required=True, help="Hotspot duration is required.")
 hotspot_parser.add_argument('amount', type=float, required=True, help="Amount is required.")
 
@@ -31,6 +35,8 @@ admin_fields = {
 
 hotspot_fields = {
     'id': fields.Integer,
+    'name': fields.String,
+    'description': fields.String,
     'hotspot_duration': fields.Integer,
     'amount': fields.Float,
 }
@@ -41,6 +47,7 @@ payment_fields = {
     'amount': fields.Float,
     'hotspot_id': fields.Integer,
     'expiry_time': fields.DateTime,
+    'status': fields.String,
 }
 
 
@@ -142,7 +149,7 @@ class HotspotResource(Resource):
         if not admin:
             return {'message': 'Unauthorized.'}, 401
 
-        hotspot = Hotspot(hotspot_duration=args['hotspot_duration'], amount=args['amount'], admin_id=admin.id)
+        hotspot = Hotspot(hotspot_duration=args['hotspot_duration'],name=args['name'],description=args['description'], amount=args['amount'], admin_id=admin.id)
         db.session.add(hotspot)
         db.session.commit()
         return hotspot, 201
@@ -229,7 +236,7 @@ class PaymentResource(Resource):
             "PartyA": args['phone_number'],  # Customer's phone number
             "PartyB": business_shortcode,
             "PhoneNumber": args['phone_number'],  # Customer's phone number
-            "CallBackURL": "https://63f8-41-90-172-14.ngrok-free.app/payment/callback",
+            "CallBackURL": "https://your-ngrok-url.com/payment/callback",  # Your callback URL
             "AccountReference": "Hotspot",
             "TransactionDesc": f"Payment for hotspot {hotspot.id}"
         }
@@ -253,12 +260,13 @@ class PaymentResource(Resource):
                 # Calculate expiry time
                 expiry_time = datetime.utcnow() + timedelta(minutes=hotspot.hotspot_duration)
 
-                # Save payment to the database
+                # Save payment to the database with status 'pending'
                 payment = Payment(
                     phone_number=args['phone_number'],
                     amount=hotspot.amount,
                     hotspot_id=args['hotspot_id'],
-                    expiry_time=expiry_time
+                    expiry_time=expiry_time,
+                    status='pending'  
                 )
                 db.session.add(payment)
                 db.session.commit()
@@ -270,3 +278,37 @@ class PaymentResource(Resource):
                 }, 400
 
         return {'message': 'Failed to send STK Push request.'}, 500
+
+    @marshal_with(payment_fields)
+    def get(self):
+        """Retrieve payments by phone_number."""
+        phone_number = request.args.get('phone_number')
+        if not phone_number:
+            return {'message': 'Phone number is required.'}, 400
+
+        # Query payments by phone number
+        payments = Payment.query.filter_by(phone_number=phone_number).all()
+
+        if not payments:
+            return {'message': 'No payments found for the given phone number.'}, 404
+
+        return payments, 200
+
+# Callback endpoint to handle payment status update
+
+
+@payment_blueprint.route('/payment/callback', methods=['POST'])
+def payment_callback():
+    data = request.json
+    # Log the received callback data (for debugging)
+    print("Callback Data Received:", data)
+
+    if data.get('ResultCode') == 0:
+        phone_number = data.get('PhoneNumber')
+        payment = Payment.query.filter_by(phone_number=phone_number, status='pending').first()
+        if payment:
+            payment.status = 'success'
+            db.session.commit()
+            return jsonify({'message': 'Payment status updated successfully'}), 200
+
+    return jsonify({'message': 'Payment failed or invalid callback data'}), 400

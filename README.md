@@ -1,1 +1,2 @@
-pip install flask flask-sqlalchemy flask-bcrypt flask-jwt-extended flask-restful requests
+pip install flask flask-sqlalchemy flask-bcrypt flask-jwt-extended flask-restful requests flask-cors
+
